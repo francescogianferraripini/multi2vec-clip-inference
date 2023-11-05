@@ -3,7 +3,7 @@
 import os
 import sys
 import logging
-from transformers import CLIPProcessor, CLIPModel
+from transformers import CLIPProcessor, CLIPModel, CLIPTokenizerFast
 from sentence_transformers import SentenceTransformer
 import open_clip
 import json
@@ -12,6 +12,19 @@ logging.basicConfig(level=logging.INFO)
 
 open_clip_model_name = os.getenv('OPEN_CLIP_MODEL_NAME')
 open_clip_pretrained = os.getenv('OPEN_CLIP_PRETRAINED')
+
+fashion_clip_model_name = os.getenv('FASHION_CLIP_MODEL_NAME')
+
+if fashion_clip_model_name is not None and fashion_clip_model_name != "":
+  logging.info(f"Downloading FASHION_CLIP model {fashion_clip_model_name} from huggingface model hub")
+  clip_tokenizer = CLIPTokenizerFast.from_pretrained(fashion_clip_model_name)
+  clip_tokenizer.save_pretrained('./models/fashion_clip_tokenizer')
+  clip_model = CLIPModel.from_pretrained(fashion_clip_model_name)
+  clip_model.save_pretrained('./models/fashion_clip')
+  clip_processor = CLIPProcessor.from_pretrained(fashion_clip_model_name)
+  clip_processor.save_pretrained('./models/fashion_clip_processor')
+
+  sys.exit(0)
 
 if open_clip_model_name is not None and open_clip_model_name != "" and open_clip_pretrained is not None and open_clip_pretrained != "":
   def check_model_and_pretrained(model_name: str, pretrained: str):

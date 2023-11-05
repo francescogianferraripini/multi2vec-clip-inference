@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from typing import Union
 from PIL import Image
 from pydantic import BaseModel
-from transformers import CLIPProcessor, CLIPModel
+from transformers import CLIPProcessor, CLIPModel, CLIPTokenizerFast
 from sentence_transformers import SentenceTransformer
 import open_clip
 import torch
@@ -90,6 +90,8 @@ class ClipInferenceSentenceTransformers(ClipInferenceABS):
 					.encode(image_files, convert_to_tensor=True)
 					.tolist()
 				)
+				print('sentencetransformers')
+				print(image_vectors)
 			finally:
 				self.lock.release()
 
@@ -253,6 +255,86 @@ class ClipInferenceOpenCLIP:
 			image_features /= image_features.norm(dim=-1, keepdim=True)
 
 		return image_features.tolist()[0]
+	
+
+class ClipInferenceFashionCLIP:
+	clip_model: CLIPModel
+	processor: CLIPProcessor
+	lock: Lock
+
+	def __init__(self, cuda, cuda_core):
+		self.lock = Lock()
+		self.device = 'cpu'
+		if cuda:
+			self.device=cuda_core
+		self.clip_model = CLIPModel.from_pretrained('./models/fashion_clip').to(self.device)
+		self.clip_processor = CLIPProcessor.from_pretrained('./models/fashion_clip_processor')
+		self.clip_tokenizer = CLIPTokenizerFast.from_pretrained('./models/fashion_clip_tokenizer')
+
+	def vectorize(self, payload: ClipInput) -> ClipResult:
+		"""
+		Vectorize data from Weaviate.
+
+		Parameters
+		----------
+		payload : ClipInput
+			Input to the Clip model.
+
+		Returns
+		-------
+		ClipResult
+			The result of the model for both images and text.
+		"""
+
+		text_vectors = []
+		if payload.texts:
+			try:
+				self.lock.acquire()
+				text_vectors = [self.create_text_embeddings(t) for t in payload.texts]
+			finally:
+				self.lock.release()
+
+		image_vectors = []
+		if payload.images:
+			try:
+				self.lock.acquire()
+				image_files = [self.preprocess_image(image) for image in payload.images]
+
+				batch = self.clip_processor(
+					text=None,
+					images=image_files,
+					return_tensors='pt',
+					padding=True
+				)['pixel_values'].to(self.device)
+				# get image embeddings
+				image_vectors = self.clip_model.get_image_features(pixel_values=batch)
+				# convert to numpy array
+				#image_vectors = image_vectors.squeeze(0)
+				#print('fashionclip')
+				#print(image_vectors)
+				image_vectors = image_vectors.cpu().detach().numpy().tolist()
+				#print(image_vectors)
+				
+				
+			finally:
+				self.lock.release()
+
+		return ClipResult(
+			text_vectors=text_vectors,
+			image_vectors=image_vectors,
+		)
+
+	def preprocess_image(self, base64_encoded_image_string):
+		image_bytes = base64.b64decode(base64_encoded_image_string)
+		img = Image.open(io.BytesIO(image_bytes))
+		return img
+
+	def create_text_embeddings(self, text: str):
+		"create text embeddings using CLIP"
+		inputs = self.clip_tokenizer(text, return_tensors="pt").to(self.device)
+		text_emb = self.clip_model.get_text_features(**inputs)
+		return text_emb[0].cpu().detach().numpy().tolist()
+
 
 
 class Clip:
@@ -263,7 +345,10 @@ class Clip:
 	def __init__(self, cuda, cuda_core):
 		self.executor = ThreadPoolExecutor()
 
-		if path.exists('./models/openai_clip'):
+		if path.exists('./models/fashion_clip'):
+			self.clip = ClipInferenceFashionCLIP(cuda, cuda_core)
+
+		elif path.exists('./models/openai_clip'):
 			self.clip = ClipInferenceOpenAI(cuda, cuda_core)
 		elif path.exists('./models/openclip'):
 			self.clip = ClipInferenceOpenCLIP(cuda, cuda_core)
